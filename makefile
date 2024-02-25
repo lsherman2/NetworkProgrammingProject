@@ -1,8 +1,8 @@
 # Makefile for client and server
 
 CC = gcc
-OBJCS = client0.c
-OBJCSS = server0.c
+OBJCS = client.c
+OBJCSS = server.c
 
 CFLAGS =  -g -Wall
 # setup for system
