@@ -3,7 +3,7 @@
 CC = gcc
 OBJCS = drone.c
 
-CFLAGS =  -g -Wall
+CFLAGS =  -lm -g -Wall
 # setup for system
 nLIBS =
 
