@@ -11,6 +11,7 @@
 void checkParams(int params);
 int checkSocket();
 int checkPortNum(char *port);
+char *cleanUp(char *str);
 
 int main(int argc, char *argv[]) {
 	int sd; // Socket descriptor
@@ -21,6 +22,8 @@ int main(int argc, char *argv[]) {
 	int rc;
 	socklen_t fromLength;
 	int flags = 0; // used for recvfrom
+	char *ptr;
+	char *table[15][2];
   
 	// Did the user enter the correct number of parameters
 	checkParams(argc);
@@ -41,7 +44,8 @@ int main(int argc, char *argv[]) {
 		perror("bind");
 		exit (1);
 	}
-  
+
+	while(1) {
 	memset(bufferReceived, 0, 1000); // Zeros out buffer
 
 	// Giving fromLength an initial value
@@ -55,13 +59,31 @@ int main(int argc, char *argv[]) {
 		perror ("recvfrom");
 		exit (1);
 	}
-	  
-	// Print message from client
-	printf ("received '%s'\n", bufferReceived);
+	
+	// Creates a table of information recieved
+	int i=0;
+	ptr = strtok(bufferReceived, ":");
+	while(ptr != NULL) {
+		table[i][0] = cleanUp(ptr);
+		ptr = strtok(NULL, " ");
+		table[i][1] = cleanUp(ptr);
+		ptr = strtok(NULL, ":");
+		i++;
+	}
+	
+	// Displays the table
+	printf("**************************************************\n");
+	printf("%-15s%s", "Name", "Value\n");
+	for(i = 0; i < 15; i++) {
+		printf("%-15s%-15s\n", table[i][0], table[i][1]);
+	}
+	printf("**************************************************\n");
+	
+	}
 }
 
 void checkParams(int params) {
-	if (params < 2 || params > 2) {
+	if (params < 2) {
 		printf("usage is: server <portnumber>\n");
 		exit (1);
 	}
@@ -97,4 +119,20 @@ int checkPortNum(char *port) {
 	}
 	
 	return pNum;
+}
+
+char *cleanUp(char *str) {
+	int i = 0, j = 0;
+	while(str[i]) {
+		if (str[i] != ' ') {
+			str[j++] = str[i];
+		}
+		if(str[i] == '^') {
+			str[i] = ' ';
+		}
+		i++;
+	}
+	str[j] = '\0';
+	str[strcspn(str, "\r\n")] = 0;
+	return str;
 }
