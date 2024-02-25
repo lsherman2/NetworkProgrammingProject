@@ -9,7 +9,9 @@
 #include <ctype.h>
 #include <math.h>
 #define STDIN 0
-#define VERSION 4
+#define VERSION 5
+#define TTL 6
+// #define DEBUG
 
 void checkParams(int params);
 int checkSocket();
@@ -19,82 +21,46 @@ int messagePairs(char *str);
 char *cleanUp(char *str);
 void sendMsg(char *buffer, int sd, struct sockaddr_in server_address);
 int getInt(int ver);
-int doItAll(int r, int c, int l1, int l2);
+int euclideanMath(int r, int c, int l1, int l2);
+void binding(char *sIP, int *pN, int *l, struct sockaddr_in server_address, const char *str, int socDes);
+int printTable(char arr[][100], int row, int col, int portNumber, int location, int tableSize);
+void tokenizeBuffer(char *buffer, char arr[][100]);
+void receiveMsg(char *buffer, int sd);
+void addLocation(char *buffer, int location);
+void addFromPort(char *buffer, int portNumber);
+void addTTL(char *buffer);
+void changeMSG(char arr[][100], char *buffer, int location, int tableSize);
+void remakeMSG(char *buffer, char arr[][100], int tableSize);
+void sendToPartners(char *buffer, int sd, struct sockaddr_in server_address, int portNumber);
+int checkVersion(char arr[][100], int index);
+void coordinateMap(int row, int col, int *x, int *y, int l);
+int checkRange(char arr[][100], int index, int row, int col, int location);
+int checkTTL(char arr[][100], int index);
+void switchSending(char *buffer, int location, int portNumber, int sd, struct sockaddr_in server_address);
+void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], int tableSize, char tbl[][100], int row, int col, int portNumber, int location, int rc, struct sockaddr_in server_address);
 
 int main(int argc, char *argv[]) {
   	int sd; // Socket descriptor
  	int rc; // Return code
   	int portNumber; // Provided by the user on the command line
   	struct sockaddr_in server_address; // My address
-	char *ptr; // Used for tokenization
-	int i = 0; // Iterator variable
 	fd_set socketFDS; // Socket descriptor set
 	int maxSD; // How many sockets are there
-	int location;
-	FILE *cfp;
-	char config[23];
-	char loc[20];
-	struct sockaddr_in from_address;  // Sender address
-	char bufferReceived[200]; // Used in recvfrom()
-	socklen_t fromLength; // Length of message from client
-	int flags = 0; // used for recvfrom
-	int tableSize; // Size of array to hold key value pairs
-	char bufferOut[200]; // Used in sendto()
+	int location; // Stores drone's location on the grid
+	char buffer[200]; // Stores the messages
+	int tableSize = 0; // Size of array to hold key value pairs
 	char serverIP[20]; // provided by the user on the command line
 	char messages[50][200]; // Stores 100 messages sent by client
-	int messageIndex = 0;
+	int messageIndex = 0; // Keeps track of messages that have been sent
 	char table[100][100]; // Creates the table for key value pairs
-	int row;
-	int col;
-	int eCheck;
+	int row = 7; // Stores row number
+	int col = 6; // Stores column number
 
 	checkParams(argc);
 
-	// Open config.file
-	if((cfp = fopen("config.file", "r")) == NULL) {
-		perror("Opening file");
-		exit(1);
-	}
-
   	sd = checkSocket(); // Creates socket
 
-	// Receives rows and columns from user
-	row = getInt(0);
-	col = getInt(1);
-
-	while(fgets(config, 23, cfp) != NULL) {
-		// Moves IP from config.file to ptr then to serverIP
-		ptr = strtok(config, " ");
-		strcpy(serverIP, ptr);
-
-		ptr = strtok(NULL, " "); // Moves port # from config.file to ptr
-		// Checks that the config.file port # matches ours
-		if(strcmp(ptr, argv[1]) == 0) {
-			portNumber = checkPortNum(ptr); // Moves ptr to portNumber
-
-			ptr = strtok(NULL, "\n"); // Gets location # from config.file
-			location = atoi(ptr); // Changes ptr to an int and moves into location
-
-			server_address.sin_family = AF_INET; // Use AF_INET addresses
-			server_address.sin_port = htons(portNumber); // Convert port number
-			server_address.sin_addr.s_addr = inet_addr(serverIP); // Convert IP addr
-
-			break; // If location found leave while loop
-		}
-	}
-
-	fclose(cfp); // Closes config.file pointer
-
-	printf("location:%d\n", location); // States the drones current location
-
-	// Bind to address
-	rc = bind(sd, (struct sockaddr *)&server_address, sizeof(struct sockaddr ));
-	
-	// Check for bind errors
-	if (rc < 0) {
-		perror("bind");
-		exit (1);
-	}
+	binding(serverIP, &portNumber, &location, server_address, argv[1], sd);
 
 	for (;;) {
 		FD_ZERO(&socketFDS);// NEW                                 
@@ -106,119 +72,11 @@ int main(int argc, char *argv[]) {
 			maxSD = sd;
 		
 		rc = select(maxSD+1, &socketFDS, NULL, NULL, NULL); // NEW block until something arrives
-		//printf("select popped\n");
-		if (FD_ISSET(STDIN, &socketFDS)){ // means i received something from the keyboard.
-			
-			// Open config.file
-			if((cfp = fopen("config.file", "r")) == NULL) {
-				perror("Opening file");
-				exit(1);
-			}
-
-			memset(bufferOut, 0, 200); // clears bufferOut
-			fgets(bufferOut, 200, stdin); // Takes input from user on command line
-    		memset(loc, 0, 20); // Clears loc
-			snprintf(loc, sizeof(loc), " location:%d", location); // Takes the variable for location and converts it into a string
-			strcat(bufferOut, loc); // Appends location to message
-
-			// Sets port number from config.file for sending
-			while(fgets(config, 23, cfp) != NULL) {
-				ptr = strtok(config, " "); // Grabs IP address from config.file
-				ptr = strtok(NULL, " "); // Grabs port # from config.file
-				server_address.sin_port = htons(checkPortNum(ptr));
-
-				sendMsg(bufferOut, sd, server_address); // Send message to other drones
-			}
-
-			fclose(cfp); // closes config.file pointer
+		if (FD_ISSET(STDIN, &socketFDS)){ // Means that I received something from the keyboard.
+			switchSending(buffer, location, portNumber, sd, server_address);
 		}
-
 		if (FD_ISSET(sd, &socketFDS)) {
-			memset(bufferReceived, 0, 200); // Zeros out buffer
-
-			fromLength = sizeof(struct sockaddr_in); // Giving fromLength an initial value
-			
-			// Receive from client
-			rc = recvfrom(sd, bufferReceived, 200, flags, (struct sockaddr *)&from_address, &fromLength);
-
-			// Check for errors
-			if (rc < 0) {
-				perror ("recvfrom");
-				exit (1);
-			}
-
-			sprintf(bufferReceived, editMessage(bufferReceived)); // Moves edited message into the buffer
-    		memset(loc, 0, 20); // Clears loc
-			snprintf(loc, sizeof(loc), " myLocation:%d", location); // Takes the variable for location and converts it into a string
-			strcat(bufferReceived, loc); // Appends location to message
-
-			memset(messages[messageIndex], 0, 200); // Clears the message at the messageIndex
-			strcpy(messages[messageIndex], bufferReceived); // Moves the bufferReceived string into the messages array
-
-			tableSize = messagePairs(bufferReceived) * 2; // Sets tableSize
-		
-			i = 0;
-			ptr = strtok(bufferReceived, ":"); // Creates the first token
-			// Fills the table with key value pairs from the message
-			while(ptr != NULL) {
-        		memset(table[i], 0, 100);
-				strcpy(table[i], cleanUp(ptr)); // Moves the key into the table
-				ptr = strtok(NULL, " "); // Makes a token of the value
-				i++;
-				memset(table[i], 0, 100);
-				strcpy(table[i], cleanUp(ptr)); // Moves the value into the table
-				ptr = strtok(NULL, ":"); // Makes a token of the key
-				i++;
-			}
-
-			int versionCheck = 0, portCheck = 0, locationCheck = 0;
-			// Checks for proper variables and outputs table if applicable
-			for(i = 0; i < tableSize; i += 2) {
-				// Check for version in message
-				if(strcmp(table[i], "version") == 0) {
-					// Checks if message version == 4
-					if(atoi(table[i + 1]) == VERSION) {
-						versionCheck = 1;
-					} else {
-						printf("Skipped, wrong version\n");
-					}
-				}
-				// Check for "port" in message
-				if(strcmp(table[i], "port") == 0) {
-					// Checks if port # in message is the same as our port #
-					if(atoi(table[i + 1]) == portNumber) {
-						portCheck = 1;
-					} else {
-						printf("Received a message NOT intended for me\n");
-					}
-				}
-				// Check for "location" in message
-				if(strcmp(table[i], "location") == 0) {
-					locationCheck = 1;
-					eCheck = doItAll(row, col, atoi(table[i + 1]), location);
-					// If the location is not in the gird
-					if(atoi(table[i + 1]) > (row * col)) {
-						printf("NOT IN GRID\n");
-					// If the location is in range
-					} else if(eCheck <= 2) {
-						printf("IN RANGE\n");
-					// The location is not in range
-					} else {
-						printf("NOT IN RANGE\n");
-					}
-				}
-				// Print table if message contains correct version, port #, and location
-				if(versionCheck && portCheck && locationCheck) {
-					// Displays the table
-					printf("**************************************************\n");
-					printf("%-20s%s\n", "Name", "Value");
-					for(i = 0; i < tableSize; i += 2) {
-						printf("%-20s%-20s\n", table[i], table[i + 1]);
-					}
-					printf("**************************************************\n");
-				}
-			}
-		messageIndex = (messageIndex + 1) % 50;
+			switchReceiving(buffer, sd, messageIndex, messages, tableSize, table, row, col, portNumber, location, rc, server_address);
 		}
 	}
 }
@@ -229,7 +87,7 @@ int main(int argc, char *argv[]) {
 
 void checkParams(int params) {
 	if (params < 2) {
-		printf("usage is: drone4 <portnumber>\n");
+		printf("usage is: drone5 <portnumber>\n");
 		exit (1);
 	}
 }
@@ -335,43 +193,319 @@ int getInt(int ver) {
 	// Gets the row from the user
 	if(ver == 0) {
 		printf("Rows: ");
-		fgets(str, 3, stdin);
-		num = atoi(str);
 	}
 	// Gets the columns from the user
 	if(ver == 1) {
 		printf("Columns: ");
-		fgets(str, 3, stdin);
-		num = atoi(str);
 	}
+	fgets(str, 3, stdin);
+	num = atoi(str);
+
 	return num;
 }
 
-int doItAll(int r, int c, int l1, int l2) {
-	int x1, x2, y1, y2, count = 0;
-	// Finds the coordinates for the sender
-	for(int j = 1; j <= r; j++) {
-		for(int k = 1; k <= c; k++) {
-			count++;
-			if(count == l1) {
-				x1 = k;
-				y1 = j;
-				break;
-			}
-		}
-	}
-	count = 0;
-	// Finds the coordinates for us
-	for(int j = 1; j <= r; j++) {
-		for(int k = 1; k <= c; k++) {
-			count++;
-			if(count == l2) {
-				x2 = k;
-				y2 = j;
-				break;
-			}
-		}
-	}
+int euclideanMath(int row, int col, int l1, int location) {
+	int x1, x2, y1, y2;
+	coordinateMap(row, col, &x1, &y1, l1);
+	coordinateMap(row, col, &x2, &y2, location);
+
 	// Applies the Euclidean distance formula to the points
 	return sqrt( pow((x1 - x2), 2.0) + pow((y1 - y2), 2.0) );
+}
+
+void binding(char *serverIP, int *portNumber, int *location, struct sockaddr_in server_address, const char *str, int sd) {
+	FILE *cfp;
+	char config[23];
+	char *ptr;
+	int rc;
+	// Open config.file
+	if((cfp = fopen("config.file", "r")) == NULL) {
+		perror("Opening file");
+		exit(1);
+	}
+
+	while(fgets(config, 23, cfp) != NULL) {
+		// Moves IP from config.file to ptr then to serverIP
+		ptr = strtok(config, " ");
+		strcpy(serverIP, ptr);
+
+		ptr = strtok(NULL, " "); // Moves port # from config.file to ptr
+		// Checks that the config.file port # matches ours
+		if(strcmp(ptr, str) == 0) {
+			*portNumber = checkPortNum(ptr); // Moves ptr to portNumber
+
+			ptr = strtok(NULL, "\n"); // Gets location # from config.file
+			*location = atoi(ptr); // Changes ptr to an int and moves into location
+
+			server_address.sin_family = AF_INET; // Use AF_INET addresses
+			server_address.sin_port = htons(*portNumber); // Convert port number
+			server_address.sin_addr.s_addr = inet_addr(serverIP); // Convert IP addr
+
+			break; // If location found leave while loop
+		}
+	}
+
+	fclose(cfp); // Closes config.file pointer
+
+	printf("location:%d\n", *location); // States the drones current location
+
+	// Bind to address
+	rc = bind(sd, (struct sockaddr *)&server_address, sizeof(struct sockaddr ));
+	
+	// Check for bind errors
+	if (rc < 0) {
+		perror("bind");
+		exit (1);
+	}
+}
+
+int printTable(char arr[][100], int row, int col, int portNumber, int location, int tableSize) {
+	int vc, wr, i = 0, alive;
+	// Checks for proper variables and outputs table if applicable
+	for(i = 0; i < tableSize; i += 2) {
+		// Check for "version" in message
+		if(strcmp(arr[i], "version") == 0) {
+			vc = checkVersion(arr, i); 
+		}
+		// Check for "location" in message
+		if(strcmp(arr[i], "location") == 0) {
+			wr = checkRange(arr, i, row, col, location);
+		}
+		if(strcmp(arr[i], "TTL") == 0) {
+			alive = checkTTL(arr, i);
+		}
+		if((i + 2) == tableSize) {
+			// Print table if message contains correct version, port #, and location
+			if(vc && wr && alive) {
+				// Displays the table
+				printf("**************************************************\n");
+				printf("%-20s%s\n", "Name", "Value");
+				for(i = 0; i < tableSize; i += 2) {
+					printf("%-20s%-20s\n", arr[i], arr[i + 1]);
+				}
+				printf("**************************************************\n");
+			}
+		}
+	}
+	return alive;
+}
+
+void tokenizeBuffer(char *buffer, char arr[][100]) {
+	int i = 0;
+	char *ptr;
+	ptr = strtok(buffer, ":"); // Creates the first token
+	// Fills the table with key value pairs from the message
+	while(ptr != NULL) {
+		memset(arr[i], 0, 100);
+		strcpy(arr[i], cleanUp(ptr)); // Moves the key into the table
+		ptr = strtok(NULL, " "); // Makes a token of the value
+		i++;
+		memset(arr[i], 0, 100);
+		strcpy(arr[i], cleanUp(ptr)); // Moves the value into the table
+		ptr = strtok(NULL, ":"); // Makes a token of the key
+		i++;
+	}
+}
+
+void receiveMsg(char *buffer, int sd) {
+	struct sockaddr_in from_address;
+	socklen_t fromLength;
+	int rc, flags = 0;
+	fromLength = sizeof(struct sockaddr_in); // Giving fromLength an initial value
+			
+	// Receive from client
+	rc = recvfrom(sd, buffer, 200, flags, (struct sockaddr *)&from_address, &fromLength);
+
+	// Check for errors
+	if (rc < 0) {
+		perror ("recvfrom");
+		exit (1);
+	}
+}
+
+void addLocation(char *buffer, int location) {
+	char loc[20];
+	memset(loc, 0, 20); // Clears loc
+	snprintf(loc, sizeof(loc), " location:%d", location); // Takes location and converts it into a string
+	strcat(buffer, loc); // Appends location to message
+}
+
+void addFromPort(char *buffer, int portNumber) {
+	char fPort[20];
+	memset(fPort, 0, 20); // Clears fPort
+	snprintf(fPort, sizeof(fPort), " fromPort:%d", portNumber); // Takes portNumber and converts it into a string
+	strcat(buffer, fPort); // Appends 
+}
+
+void addTTL(char *buffer) {
+	char live[10];
+	memset(live, 0, 10); // Clears live
+	snprintf(live, sizeof(live), " TTL:%d", TTL); // Takes TTL and converts it into a string
+	strcat(buffer, live); // Appends TTL:TTL to the message
+}
+
+void changeMSG(char arr[][100], char *buffer, int location, int tableSize) {
+	char loc[5];
+	int newTTL;
+	for(int i = 0; i < tableSize; i += 2) {
+		// Change "location" value within message
+		if(strcmp(arr[i], "location") == 0) {
+			memset(arr[i + 1], 0, 100);
+			snprintf(loc, sizeof(loc), "%d", location);
+			strcpy(arr[i + 1], loc);
+		}
+		// Decrement the TTL
+		if(strcmp(arr[i], "TTL") == 0) {
+			newTTL = atoi(arr[i + 1]) - 1;
+			memset(arr[i + 1], 0, 100);
+			memset(loc, 0, 5);
+			snprintf(loc, sizeof(loc), "%d", newTTL);
+			strcpy(arr[i + 1], loc);
+		}
+	}
+
+	remakeMSG(buffer, arr, tableSize);
+}
+
+void remakeMSG(char *buffer, char arr[][100], int tableSize) {
+	memset(buffer, 0, 200); // Clears the buffer
+	for(int i = 0; i < tableSize; i += 2) {
+		// Puts a key from the table into the buffer
+		strcat(buffer, arr[i]);
+		// Place a key value separator
+		strcat(buffer, ":");
+		// Place a value from the table into the buffer
+		strcat(buffer, arr[i + 1]);
+		// If the end of the table has not been reached
+		if((i + 1) != tableSize) {
+			// Put a space to separate kv pairs
+			strcat(buffer, " ");
+		}
+	}
+}
+
+void sendToPartners(char *buffer, int sd, struct sockaddr_in server_address, int portNumber) {
+	FILE *cfp;
+	char *ptr;
+	char config[23];
+
+	// Open config.file
+	if((cfp = fopen("config.file", "r")) == NULL) {
+		perror("Opening file");
+		exit(1);
+	}
+
+	// Sets port number from config.file for sending
+	while(fgets(config, 23, cfp) != NULL) {
+		server_address.sin_family = AF_INET; // Use AF_INET addresses
+		ptr = strtok(config, " "); // Grabs IP address from config.file
+		server_address.sin_addr.s_addr = inet_addr(ptr); // Convert IP addr
+		ptr = strtok(NULL, " "); // Grabs port # from config.file
+		// If the port # is not the same as mine
+		if(atoi(ptr) != portNumber) {
+			server_address.sin_port = htons(checkPortNum(ptr)); // Set port # in server_address
+		} else {
+			continue; // Do not send anything to myself
+		}
+		
+		sendMsg(buffer, sd, server_address); // Send message
+	}
+
+	fclose(cfp); // closes config.file pointer
+}
+
+int checkVersion(char arr[][100], int index) {
+	// Checks if message value for version == VERSION
+	if(atoi(arr[index + 1]) == VERSION) {
+		return 1;
+	} else {
+		#ifdef DEBUG
+		printf("Wrong version number\n");
+		#endif
+		return 0;
+	}
+}
+
+void coordinateMap(int row, int col, int *x, int *y, int l) {
+	int count = 0; // Keeps track of the location in the grid
+	// Finds the y axis for the location
+	for(int j = 1; j <= row; j++) {
+		// Finds the x axis for the location
+		for(int k = 1; k <= col; k++) {
+			count++;
+			// Set x and y for location coordinates
+			if(count == l) {
+				*x = k;
+				*y = j;
+				break;
+			}
+		}
+	}
+}
+
+int checkRange(char arr[][100], int index, int row, int col, int location) {
+	int eCheck = euclideanMath(row, col, atoi(arr[index + 1]), location);
+	if(location > (row * col)) {
+		#ifdef DEBUG
+		printf("OUT OF GRID\n");
+		#endif
+		return 0;
+	} else if(eCheck > 2) {
+		#ifdef DEBUG
+		printf("NOT IN RANGE\n");
+		#endif
+		return 0;
+	} else if(eCheck > 0) {
+		#ifdef DEBUG
+		printf("IN RANGE\n");
+		#endif
+		return 1;
+	}
+	return 0;
+}
+
+int checkTTL(char arr[][100], int index) {
+	if(atoi(arr[index + 1]) < 0) {
+		#ifdef DEBUG
+		printf("TTL is: %s", arr[index + 1]);
+		#endif
+		return 0;
+	}
+	return 1;
+}
+
+void switchSending(char *buffer, int location, int portNumber, int sd, struct sockaddr_in server_address) {
+	memset(buffer, 0, 200); // clears buffer
+	fgets(buffer, 200, stdin); // Takes input from user on command line
+	// Adds all necessary kv pairs
+	addLocation(buffer, location);
+	addFromPort(buffer, portNumber);
+	addTTL(buffer);
+
+	sendToPartners(buffer, sd, server_address, portNumber); // Sends message to all other port #'s
+}
+
+void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], int tableSize, char tbl[][100], int row, int col, int portNumber, int location, int rc, struct sockaddr_in server_address) {
+	memset(buffer, 0, 200); // Zeros out buffer
+
+	receiveMsg(buffer, sd);
+
+	sprintf(buffer, editMessage(buffer)); // Moves edited message into the buffer
+
+	tableSize = messagePairs(buffer) * 2; // Sets tableSize
+
+	tokenizeBuffer(buffer, tbl);
+
+	rc = printTable(tbl, row, col, portNumber, location, tableSize);
+
+	if(rc >= 0) {
+		memset(msgs[messageIndex], 0, 200); // Clears the message at the messageIndex
+		strcpy(msgs[messageIndex], buffer); // Moves the buffer string into the messages array
+
+		changeMSG(tbl, buffer, location, tableSize);
+
+		sendToPartners(buffer, sd, server_address, portNumber);
+
+		messageIndex = (messageIndex + 1) % 50;
+	}
 }
