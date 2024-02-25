@@ -1,20 +1,16 @@
-# Makefile for client and server
+# Makefile for drone
 
 CC = gcc
-OBJCS = client.c
-OBJCSS = server.c
+OBJCS = drone.c
 
 CFLAGS =  -g -Wall
 # setup for system
 nLIBS =
 
-all: client server
+all: drone
 
-client: $(OBJCS)
+drone: $(OBJCS)
 	$(CC) $(CFLAGS) -o $@ $(OBJCS) $(LIBS)
 
-server: $(OBJCSS)
-	$(CC) $(CFLAGS) -o $@ $(OBJCSS) $(LIBS)
-
 clean:
-	rm client server
+	rm -f drone
