@@ -1,0 +1,1 @@
+After cloning the repository type "make" Then to run the server type "./server" To run the client type "./client" Finally type "make clean" to remove the server2 and client2 executables.

@@ -8,99 +8,84 @@
 #include <unistd.h>
 #include <ctype.h>
 
-void checkParams(int params);
+// void checkParams(int params);
 int checkPortNum(char *port);
 int checkSocket();
-char *editMessage(char *str, int size);
+char *editMessage(char *str);
 
 int main(int argc, char *argv[]) {
 	int sd; // Socket descriptor
-	struct sockaddr_in server_address;  // Structure for addresses
-	struct sockaddr_in inaddr;  // Structure for checking addresses
-	int rc;
+	struct sockaddr_in server_address; // Structure for addresses
+	struct sockaddr_in inaddr; // Structure for checking addresses
+	int rc; // Return code
 	char bufferOut[200]; // Used in sendto()
 	char serverIP[20]; // provided by the user on the command line
 	int portNumber = 0; // provided by the user on the command line
-	FILE *file;
-	char *line = NULL;
-	size_t len = 200;
-	int ret;
-	char fname[64];
-	
-	// Did the user enter the correct number of parameters
-	checkParams(argc);
-	
-	/** This code checks to see if the ip address is a valid ip address 
-	    meaning it is in dotted notation and has valid numbers **/
-	if (!inet_pton(AF_INET, argv[1], &inaddr)) {
-		printf("error, bad ip address\n");
-		exit(1);
-	}
-  
-	sd = checkSocket(); // Creates and verifies socket
+	FILE *mfp; // Message file pointer
+	FILE *cfp; // Config file pointer
+	char message[200]; // Message file line
+	char config[21]; // Config file line
+	char *ptr; // Holds token for ip address and port number
 
-	portNumber = checkPortNum(argv[2]); // Verifies and returns port number
-  
-	strcpy(serverIP, argv[1]); // Copies IP address
-
-	server_address.sin_family = AF_INET; // Use AF_INET addresses
-	server_address.sin_port = htons(portNumber); // Convert port number
-	server_address.sin_addr.s_addr = inet_addr(serverIP); // Convert IP addr
-	
-	// Prompts the user to input a filename
-	printf("Please input the file you would like read: ");
-	scanf("%s", fname);
-	
 	// Opens file
-	if((file = fopen(fname, "r")) == NULL) {
+	if((cfp = fopen("config.file", "r")) == NULL) { 
 		perror("Opening file");
 		exit(1);
 	}
 	
-	// Loops until file has been fully read
-	for(;;) {
-		// Gets the lines of the file 
-		ret = getline(&line, &len, file);
-		
-		// If there are no more lines end the loop
-		if(ret <= 0) {
-			printf("done with file\n");
-			break;
-		}
-		
-		// If line is too large end the loop
-		if(sizeof(line) > 200) {
-			printf("line must be <= 200 characters\n");
-			break;
-		}
-		
-		line = editMessage(line, len); // Adds ^ to the message for easier parsing
-		
-		memset(bufferOut, 0, 200); // Zeros out buffer
-		sprintf(bufferOut, line);
-		
-		// Send to address
-		rc = sendto(sd, bufferOut, strlen(bufferOut), 0, (struct sockaddr *) &server_address, sizeof(server_address));
-		
-		// Check for send errors
-		if (rc < strlen(bufferOut)) {
-			perror("sendto");
+	while(fgets(config, 21, cfp) != NULL) {
+		ptr = strtok(config, " "); // contains the ip address from the config file
+
+		/** This code checks to see if the ip address is a valid ip address 
+		meaning it is in dotted notation and has valid numbers **/
+		if (!inet_pton(AF_INET, ptr, &inaddr)) {
+			printf("error, bad ip address\n");
 			exit(1);
 		}
-	}
 	
-	// Close the file and free line from memory
-	fclose(file);
-	if(line) {
-		free(line);
-	}
-}
+		sd = checkSocket(); // Creates and verifies socket
 
-void checkParams(int params) {
-	if (params < 3) {
-		printf("usage is: client <ipaddr> <portnumber>\n");
-		exit(1);
+		strcpy(serverIP, ptr); // Copies IP address
+
+		ptr = strtok(NULL, "\n"); // contains the port number form the config file
+		portNumber = checkPortNum(ptr); // Verifies and returns port number
+	
+		server_address.sin_family = AF_INET; // Use AF_INET addresses
+		server_address.sin_port = htons(portNumber); // Convert port number
+		server_address.sin_addr.s_addr = inet_addr(serverIP); // Convert IP addr
+		
+		// Opens file
+		if((mfp = fopen("messages.txt", "r")) == NULL) {
+			perror("Opening file");
+			exit(1);
+		}
+		
+		// Loops until file has been fully read
+		while(fgets(message, 200, mfp)) {
+			
+			// If line is too large end the loop
+			if(strlen(message) > 200) {
+				printf("line must be <= 200 characters\n");
+				break;
+			}
+			
+			memset(bufferOut, 0, 200); // Zeros out buffer
+			sprintf(bufferOut, editMessage(message)); // Moves edited message into the buffer
+
+			// Send to address
+			rc = sendto(sd, bufferOut, strlen(bufferOut), 0, (struct sockaddr *) &server_address, sizeof(server_address));
+			
+			// Check for send errors
+			if (rc < strlen(bufferOut)) {
+				perror("sendto");
+				exit(1);
+			}
+		}
+		// Close the message file
+		fclose(mfp);
 	}
+	// Close the confige file
+	fclose(cfp);
 }
 
 int checkPortNum(char *port) {
@@ -135,10 +120,10 @@ int checkSocket() {
 	return sockOut;
 }
 
-char *editMessage(char* str, int size) {
+char *editMessage(char* str) {
 	int quote = 0;
-	for(int i = 0; i < size; i++) {
-		// Start of the message
+	for(int i = 0; i < strlen(str); i++) {
+		// Finds the start of the message
 		if(str[i] == '"') {
 			quote = 1;
 		}
@@ -147,7 +132,7 @@ char *editMessage(char* str, int size) {
 			i++;
 			if(str[i] == ' ') {
 				str[i] = '^';
-			// End of the message
+			// Finds the end of the message
 			} else if(str[i] == '"') {
 				quote = 0;
 			}
