@@ -11,7 +11,7 @@
 #include <stdbool.h>
 
 #define STDIN 0
-#define VERSION 6
+#define VERSION 7
 #define TTL 3
 #define MAXSEQNUMBER 100
 #define MAXPARTNERS 100
@@ -50,29 +50,28 @@ int checkTTL(char arr[][100], int index);
 int checkVersion(char arr[][100], int index);
 char *cleanUp(char *str);
 void coordinateMap(int row, int col, int *x, int *y, int l);
+void createPartners(int sd, struct _partners *Partners, int myPort, int *myLocation);
 char *editMessage(char *str);
 int euclideanMath(int r, int c, int l1, int l2);
+char *findCharToken(struct _tokens *tokens, int tableSize, char *key);
+int findIntToken(struct _tokens *tokens, int tableSize, char *key);
+int findPartner(int sourcePort, struct _partners Partners);
+int findSequence(int toPort, struct _partners *Partners);
 int getInt(int ver);
-void makeBind(int *sd, char *str, struct sockaddr_in *server_address, int *myPort);
+int getSequence(char *buffer, struct _partners *Partners);
+void makeBind(int *sd, char *str, struct sockaddr_in *server_address, int *myPort, int argc);
 int messagePairs(char *str);
+void printPartners (struct _partners *Partners);
 void printTable(struct _tokens *Tokens, int tokenNum);
+void readFile(struct _partners *Partners, int myPort, int *myLocation);
 void receiveMsg(char *buffer, int sd);
 void remakeMSG(char *buffer, struct _tokens *Tokens, int tokenNum);
 void sendMsg(char *buffer, int sd, struct sockaddr_in server_address);
 void sendToPartners(char *buffer, int sd, struct _partners Partners, int myPort);
-void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], int row, int col, int myPort, int myLocation, int rc, struct sockaddr_in server_address, int *sequence, struct _partners *Partners, struct _tokens *tokens);
+void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], int row, int col, int myPort, int *myLocation, int rc, struct sockaddr_in server_address, int *sequence, struct _partners *Partners, struct _tokens *tokens);
 void switchSending(char *buffer, int myLocation, int myPort, int sd, struct sockaddr_in server_address, int sequence, struct _partners *Partners);
 int tokenizeBuffer(char *buffer, struct _tokens *Tokens);
-
-void printPartners (struct _partners *Partners);
-void readFile(struct _partners *Partners, int myPort, int *myLocation);
-void createPartners(int sd, struct _partners *Partners, int myPort, int *myLocation);
-int findSequence(int toPort, struct _partners *Partners);
-char *findCharToken(struct _tokens *tokens, int tableSize, char *key);
-int findIntToken(struct _tokens *tokens, int tableSize, char *key);
-int findPartner(int sourcePort, struct _partners Partners);
-
-int getSequence(char *buffer, struct _partners *Partners);
+int checkPath(char *buffer, int portNumber);
 
 int main(int argc, char *argv[]) {
 	struct _partners Partners;
@@ -90,10 +89,8 @@ int main(int argc, char *argv[]) {
 	int sequence = 0;
 	int row = 5; // Stores row number
 	int col = 3; // Stores column number
-
-	checkParams(argc);
 	
-	makeBind(&sd, argv[1], &server_address, &myPort);
+	makeBind(&sd, argv[1], &server_address, &myPort, argc);
 	
 	createPartners(sd, &Partners, myPort, &myLocation);
 
@@ -111,7 +108,7 @@ int main(int argc, char *argv[]) {
 			switchSending(buffer, myLocation, myPort, sd, server_address, sequence, &Partners);
 		}
 		if (FD_ISSET(sd, &socketFDS)) {
-			switchReceiving(buffer, sd, messageIndex, messages, row, col, myPort, myLocation, rc, server_address, &sequence, &Partners, Tokens);
+			switchReceiving(buffer, sd, messageIndex, messages, row, col, myPort, &myLocation, rc, server_address, &sequence, &Partners, Tokens);
 		}
 	}
 }
@@ -136,9 +133,9 @@ void addLocation(char *buffer, int myLocation) {
 
 void addSendPath(char *buffer, int myPort) {
 	char path[20];
-	memset(path, 0, 20); // Clears live
-	snprintf(path, sizeof(path), " send-path:%d", myPort); // Makes type:ACK a string
-	strcat(buffer, path); // Appends type:ACK to the message
+	memset(path, 0, 20); // Clears path
+	snprintf(path, sizeof(path), " send-path:%d", myPort); // Makes send-path:myPort a string
+	strcat(buffer, path); // Appends send-path:myPort to the message
 }
 
 void addSequenceNum(char *buffer, int sequence) {
@@ -157,7 +154,7 @@ void addTTL(char *buffer) {
 
 void addTypeACK(char *buffer) {
 	char type[10];
-	memset(type, 0, 10); // Clears live
+	memset(type, 0, 10); // Clears type
 	snprintf(type, sizeof(type), " type:ACK"); // Makes type:ACK a string
 	strcat(buffer, type); // Appends type:ACK to the message
 }
@@ -169,30 +166,30 @@ void changeMSG(struct _tokens *Tokens, char *buffer, int myLocation, int tokenNu
 	for(int i = 0; i < tokenNum; i++) {
 		// Change "myLocation" value within message
 		if(strcmp(Tokens[i].key, "location") == 0) {
-			memset(Tokens[i].value, 0, 100);
-			memset(buff, 0, 10);
-			snprintf(buff, sizeof(buff), "%d", myLocation);
-			strcpy(Tokens[i].value, buff);
+			memset(Tokens[i].value, 0, 100); // clears the token value
+			memset(buff, 0, 10); // clears buff
+			snprintf(buff, sizeof(buff), "%d", myLocation); // changes myLocation into a string
+			strcpy(Tokens[i].value, buff); // moves the string into the value
 		}
 		// Decrement the TTL
 		if(strcmp(Tokens[i].key, "TTL") == 0) {
-			newTTL = atoi(Tokens[i].value) - 1;
-			memset(Tokens[i].value, 0, 100);
-			memset(buff, 0, 10);
-			snprintf(buff, sizeof(buff), "%d", newTTL);
-			strcpy(Tokens[i].value, buff);
+			newTTL = atoi(Tokens[i].value) - 1; // sets the new TTL
+			memset(Tokens[i].value, 0, 100); // clears the token value
+			memset(buff, 0, 10); // clears buff
+			snprintf(buff, sizeof(buff), "%d", newTTL); // changes newTTL into a string
+			strcpy(Tokens[i].value, buff); // moves the string into the value
 		}
 		// Change "send-path"
 		if(strcmp(Tokens[i].key, "send-path") == 0) {
 			snprintf(buff, sizeof(buff), "%d", myPort);
 			if(strstr(Tokens[i].value, buff) == NULL) {
-				memset(bigBuff, 0, 100);
-				strcpy(bigBuff, Tokens[i].value);
-				memset(Tokens[i].value, 0, 100);
-				memset(buff, 0, 10);
-				snprintf(buff, sizeof(buff), ",%d", myPort);
-				strcat(bigBuff, buff);
-				strcpy(Tokens[i].value, bigBuff);
+				memset(bigBuff, 0, 100); // clears bigBuff
+				strcpy(bigBuff, Tokens[i].value); // copies the token value into bigBuff
+				memset(Tokens[i].value, 0, 100); // clears the token value
+				memset(buff, 0, 10); // clears buff
+				snprintf(buff, sizeof(buff), ",%d", myPort); // makes myPort into a string
+				strcat(bigBuff, buff); // concatenate the string to bigBuff
+				strcpy(Tokens[i].value, bigBuff); // replace the previous value with bigBuff
 			}
 		}
 	}
@@ -201,9 +198,37 @@ void changeMSG(struct _tokens *Tokens, char *buffer, int myLocation, int tokenNu
 
 void checkParams(int params) {
 	if (params < 2) {
-		printf("usage is: drone6 <myPort>\n");
+		printf("usage is: drone7 <myPort>\n");
 		exit (1);
 	}
+}
+
+int checkPath(char *buffer, int portNumber) {
+	char *str;
+	char copy[200];
+	char *ptr;
+
+	memset(copy, 0, 200); // clear copy
+	strcpy(copy, buffer); // copy buffer into copy
+
+	str = strstr(copy, "send-path:"); // get pointer to the string
+	// if the string does not exist
+	if(str == NULL) {
+	    printf ("no send-path, can't send it\n");
+	    exit(1);
+    }
+
+	ptr = strtok(str, ":"); // contains "send-path"
+	ptr = strtok(NULL, ","); // contains a port number
+	while(ptr != NULL) {
+		// if the port number in ptr is the same
+		if(atoi(ptr) == portNumber) {
+			return 1;
+		}
+		ptr = strtok(NULL, ","); // get next port number
+	}
+
+	return 0;
 }
 
 int checkPortNum(char *port) {
@@ -248,6 +273,7 @@ int checkRange(int sendLocation, int row, int col, int myLocation) {
 }
 
 int checkTTL(char arr[][100], int index) {
+	// if ttl is <= 0
 	if(atoi(arr[index + 1]) <= 0) {
 		#ifdef DEBUG
 		printf("TTL is: %s", arr[index + 1]);
@@ -305,6 +331,14 @@ void coordinateMap(int row, int col, int *x, int *y, int l) {
 	}
 }
 
+void createPartners(int sd, struct _partners *Partners, int myPort, int *myLocation) {
+	memset(Partners, 0, sizeof(struct _partners)); // clear the _partners struct
+	Partners->maxHosts = 0; // set maxHosts
+	readFile(Partners, myPort, myLocation);
+	printf("Port:%d, Location:%d\n", myPort, *myLocation);
+	printPartners(Partners);
+}
+
 char *editMessage(char* str) {
 	int quote = 0;
 	for(int i = 0; i < strlen(str); i++) {
@@ -335,6 +369,52 @@ int euclideanMath(int row, int col, int l1, int myLocation) {
 	return sqrt( pow((x1 - x2), 2.0) + pow((y1 - y2), 2.0) );
 }
 
+char *findCharToken(struct _tokens *tokens, int tableSize, char *key) {
+	for(int i = 0; i < tableSize; i++) {
+		// if token key is equal to the string
+		if(strcmp(tokens[i].key, key) == 0) {
+			// return value of token
+			return tokens[i].value;
+		}
+	}
+	return NULL;
+}
+
+int findIntToken(struct _tokens *tokens, int tableSize, char *key) {
+	for(int i = 0; i < tableSize; i++) {
+		// if token key is equal to the key string
+		if(strcmp(tokens[i].key, key) == 0) {
+			// return value of token as an int
+			return atoi(tokens[i].value);
+		}
+	}
+	return -1;
+}
+
+int findPartner(int sourcePort, struct _partners Partners) {
+	for(int i = 0; i < Partners.maxHosts; i++) {
+		// if partner at i == the port searched for
+		if(Partners.hostInfo[i].portNumber == sourcePort) {
+			// return i
+			return i;
+		}
+	}
+	return -1;
+}
+
+int findSequence(int toPort, struct _partners *Partners) {
+	for(int i = 0; i < Partners->maxHosts; i++) {
+		// if partner at i == the port searched for
+		if(Partners->hostInfo[i].portNumber == toPort) {
+			// increase the seqNumber for the partner
+			Partners->hostInfo[i].currentSeqNumber ++;
+			// return the seqNumber
+			return Partners->hostInfo[i].currentSeqNumber;
+		}
+	}
+	return -1;
+}
+
 int getInt(int ver) {
 	char str[5];
 	int num;
@@ -352,6 +432,73 @@ int getInt(int ver) {
 	return num;
 }
 
+int getSequence(char *buffer, struct _partners *Partners) {
+	char *ptr;
+	char toPort[6];
+	int copyLength;
+
+	ptr = strstr(buffer, "toPort:"); // get pointer to the string in buffer
+	// if it is not in the buffer
+	if (ptr == NULL) {
+	    printf ("no toPort, can't send it\n");
+	    exit(1);
+    }
+
+	char *ptrColon = strstr(ptr, ":"); // get pointer to : 
+	char *ptrEnd = strstr(ptr, " "); // get pointer to  
+	// if the pointer is at the end of the buffer
+	if(ptrEnd == NULL) {
+		copyLength = 6;
+	} else {
+		copyLength = ptrColon - ptr; // get length of the port
+	}
+
+	strncpy(toPort, ptrColon + 1, copyLength - 1); // copy the string after the colon into toPort with length copyLength - 1
+	int port = atoi(toPort); // change toPort to int
+	return findSequence(port, Partners);
+}
+
+void makeBind(int *sd, char *str, struct sockaddr_in *server_address, int *myPort, int argc) {
+	int rc;
+
+	checkParams(argc);
+
+	*sd = socket(AF_INET, SOCK_DGRAM, 0); // create the socket
+	// if there is an error in socket creation
+	if (*sd == -1) {
+		printf("socket");
+		exit(1);
+	}
+
+	// check that the port is a number
+	for (int i = 0; i < strlen(str); i++) {
+		if (!isdigit(str[i])) {
+			printf("The port number isn't a number!\n");
+			exit(1);
+		}
+	}
+
+	*myPort = strtol(str, NULL, 10);
+
+	if ((*myPort > 65535)) {
+		printf("you entered an invalid socket number\n");
+		exit(1);
+	}
+
+	server_address->sin_family = AF_INET; /* use AF_INET addresses */
+  	server_address->sin_port = htons(*myPort); /* convert port number */
+  	server_address->sin_addr.s_addr = INADDR_ANY; /* any adapter */
+
+	// Bind to address
+	rc = bind(*sd, (struct sockaddr *)server_address, sizeof(struct sockaddr));
+	
+	// Check for bind errors
+	if (rc < 0) {
+		perror("bind");
+		exit (1);
+	}
+}
+
 int messagePairs(char *str) {
 	int pairs = 0;
 	// Counts the number of key value pairs in message
@@ -363,6 +510,20 @@ int messagePairs(char *str) {
 	return pairs;
 }
 
+void printPartners(struct _partners *Partners) {
+	int i = 0;
+
+	/* the partners structure tells me how many partners/hosts i have */
+	while(i < Partners->maxHosts) { // do it for each entry. 
+		printf("ipaddress:%s, port:%d, location:%d, host:%d\n",
+			Partners->hostInfo[i].ipAddress, //IP address
+			Partners->hostInfo[i].portNumber, //port Number
+			Partners->hostInfo[i].location, //location
+		i);
+		i++;  // increment i
+	}
+}
+
 void printTable(struct _tokens *Tokens, int tokenNum) {
 	// Displays the table
 	printf("**************************************************\n");
@@ -371,6 +532,46 @@ void printTable(struct _tokens *Tokens, int tokenNum) {
 		printf("%-20s%-20s\n", Tokens[i].key, Tokens[i].value);
 	}
 	printf("**************************************************\n");
+}
+
+void readFile(struct _partners *Partners, int myPort, int *myLocation) {
+	FILE *cfp;
+	char *ptr;
+	char config[23];
+	int port;
+	int location;
+
+	// open file, if it doesn't exist exit
+	if((cfp = fopen("config.file", "r")) == NULL) {
+		perror("Opening file");
+		exit(1);
+	}
+
+	// while there are still lines in the file
+	while(fgets(config, 23, cfp) != NULL) {
+		ptr = strtok(config, " "); // contains the ip
+		port = atoi(strtok(NULL, " ")); // contains the port number
+		location = atoi(strtok(NULL, "\n")); // contains the location
+		// if the port is mine, then set my location
+		if(myPort == port) {
+			*myLocation = location;
+		}
+
+		// fill the partners struct with the information
+		Partners->hostInfo[Partners->maxHosts].portNumber = port;
+		Partners->hostInfo[Partners->maxHosts].location = location;
+		strcpy (Partners->hostInfo[Partners->maxHosts].ipAddress, ptr);
+		Partners->hostInfo[Partners->maxHosts].currentSeqNumber = 0;
+
+		for(int i = 0; i<MAXSEQNUMBER; i++) {
+			Partners->hostInfo[Partners->maxHosts].hasAcked[i] = false;     
+			Partners->hostInfo[Partners->maxHosts].sentAck[i] = false;     
+		}
+		Partners->hostInfo[Partners->maxHosts].location = location;
+		Partners->maxHosts ++;
+	}
+
+	fclose(cfp); // Closes config.file pointer
 }
 
 void receiveMsg(char *buffer, int sd) {
@@ -423,12 +624,18 @@ void sendToPartners(char *buffer, int sd, struct _partners Partners, int myPort)
 	struct sockaddr_in server_address;
 
 	for(int i = 0; i < Partners.maxHosts; i++) {
-		int portNumber;
+		int portNumber, seen = 0;
 		char serverIP[20];
 		memset(serverIP, 0, 20);
 		portNumber = Partners.hostInfo[i].portNumber;
 		strcpy(serverIP, Partners.hostInfo[i].ipAddress);
 
+		// check if the port has been sent to previously
+		seen = checkPath(buffer, portNumber);
+
+		if(seen == 1) {
+			continue;
+		}
 		if(portNumber != myPort) {
 			server_address.sin_family = AF_INET;
     		server_address.sin_port = htons(portNumber);
@@ -439,40 +646,10 @@ void sendToPartners(char *buffer, int sd, struct _partners Partners, int myPort)
 
 		sendMsg(buffer, sd, server_address);
 	}
-	
-	
-	
-	/* FILE *cfp;
-	char *ptr;
-	char config[23];
-
-	// Open config.file
-	if((cfp = fopen("config.file", "r")) == NULL) {
-		perror("Opening file");
-		exit(1);
-	}
-
-	// Sets port number from config.file for sending
-	while(fgets(config, 23, cfp) != NULL) {
-		server_address.sin_family = AF_INET; // Use AF_INET addresses
-		ptr = strtok(config, " "); // Grabs IP address from config.file
-		server_address.sin_addr.s_addr = inet_addr(ptr); // Convert IP addr
-		ptr = strtok(NULL, " "); // Grabs port # from config.file
-		// If the port # is not the same as mine
-		if(atoi(ptr) != myPort) {
-			server_address.sin_port = htons(checkPortNum(ptr)); // Set port # in server_address
-		} else {
-			continue; // Do not send anything to myself
-		}
-		
-		sendMsg(buffer, sd, server_address); // Send message
-	}
-
-	fclose(cfp); // closes config.file pointer */
 }
 
-void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], int row, int col, int myPort, int myLocation, int rc, struct sockaddr_in server_address, int *sequence, struct _partners *Partners, struct _tokens *Tokens) {
-	int tokenNum, destinationPort, sourcePort, version, sendLocation, distance;
+void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], int row, int col, int myPort, int *myLocation, int rc, struct sockaddr_in server_address, int *sequence, struct _partners *Partners, struct _tokens *Tokens) {
+	int tokenNum, destinationPort, sourcePort, version, sendLocation, distance, move;
 	memset(buffer, 0, 200); // Zeros out buffer
 
 	receiveMsg(buffer, sd);
@@ -481,33 +658,51 @@ void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], i
 
 	tokenNum = tokenizeBuffer(buffer, Tokens);
 
+	// get destination and source port from the message
 	destinationPort = findIntToken(Tokens, tokenNum, "toPort");
 	sourcePort = findIntToken(Tokens, tokenNum, "fromPort");
+	// if they don't exist
 	if(destinationPort == -1 || sourcePort == -1) {
 		#ifdef DEBUG
 			printf("No source/destination port");
 		#endif
+		exit(1);
 	}
 
-	version = findIntToken(Tokens, tokenNum, "version");
+	version = findIntToken(Tokens, tokenNum, "version"); // get version from the message
+	// if version doesn't exist
 	if(version == -1) {
 		#ifdef DEBUG
 			printf("No version number");
 		#endif
+		exit(1);
 	}
+	// if it is the wrong version
 	if(version != VERSION) {
 		#ifdef DEBUG
 			printf("Wrong version number");
 		#endif
+		exit(1);
 	}
 
-	sendLocation = findIntToken(Tokens, tokenNum, "location");
+	// check that the move command is in the message
+	move = findIntToken(Tokens, tokenNum, "move");
+	// If there is a move and the toPort is myPort
+	if(move != -1 && destinationPort == myPort) {
+		// set myLocation
+		*myLocation = move;
+	}
+
+	sendLocation = findIntToken(Tokens, tokenNum, "location"); // check for location in the message
+	// if the location does not exit
 	if(sendLocation == -1) {
 		#ifdef DEBUG
 			printf("Wrong version number");
 		#endif
+		exit(1);
 	}
-	distance = checkRange(sendLocation, row, col, myLocation);
+
+	distance = checkRange(sendLocation, row, col, *myLocation); 
 	if(distance == -1) {
 		#ifdef DEBUG
 			printf("Location is not in the grid");
@@ -544,7 +739,7 @@ void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], i
 					char buffer[200];
 	    			memset (buffer, 0, 200);
 					//changeMSG(Tokens, buffer, myLocation, tokenNum, myPort);
-					sprintf (buffer, "send-path:%d TTL:%d version:%d toPort:%d fromPort:%d seqNumber:%d type:ACK location:%d", myPort, TTL, VERSION, sourcePort, myPort, seqNum, myLocation);
+					sprintf (buffer, "send-path:%d TTL:%d version:%d toPort:%d fromPort:%d seqNumber:%d type:ACK location:%d", myPort, TTL, VERSION, sourcePort, myPort, seqNum, *myLocation);
 					sendToPartners(buffer, sd, *Partners, myPort);
 					if(Partners->hostInfo[partnerPos].sentAck[seqNum] == true) {
 						printf ("Duplicate packet detected! Duplication Ack being sent for ");
@@ -565,7 +760,7 @@ void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], i
 				printf ("message received NOT for me and msg out of lives!.\n");
 			#endif
 		} else {
-			changeMSG(Tokens, buffer, myLocation, tokenNum, myPort);
+			changeMSG(Tokens, buffer, *myLocation, tokenNum, myPort);
 			sendToPartners(buffer, sd, *Partners, myPort);
 		}
 	}
@@ -585,30 +780,6 @@ void switchSending(char *buffer, int myLocation, int myPort, int sd, struct sock
 	sendToPartners(buffer, sd, *Partners, myPort); // Sends message to all other port #'s
 }
 
-int getSequence(char *buffer, struct _partners *Partners) {
-	char *ptr;
-	char toPort[6];
-	int copyLength;
-
-	ptr = strstr(buffer, "toPort:");
-	if (ptr == NULL) {
-	    printf ("no toPort, can't send it\n");
-	    exit(1);
-    }
-
-	char *ptrColon = strstr(ptr, ":");
-	char *ptrEnd = strstr(ptr, " ");
-	if(ptrEnd == NULL) {
-		copyLength = 6;
-	} else {
-		copyLength = ptrColon - ptr;
-	}
-
-	strncpy(toPort, ptrColon + 1, copyLength - 1);
-	int port = atoi(toPort);
-	return findSequence(port, Partners);
-}
-
 int tokenizeBuffer(char *buffer, struct _tokens *Tokens) {
 	int i = 0;
 	char *ptr;
@@ -626,139 +797,4 @@ int tokenizeBuffer(char *buffer, struct _tokens *Tokens) {
 	return i;
 }
 
-// version:6 msg:"hi 15" toPort:47015
-
-void makeBind(int *sd, char *str, struct sockaddr_in *server_address, int *myPort) {
-	int rc;
-
-	*sd = socket(AF_INET, SOCK_DGRAM, 0);
-
-	if (*sd == -1) {
-		printf("socket");
-		exit(1);
-	}
-
-	for (int i = 0; i < strlen(str); i++) {
-		if (!isdigit(str[i])) {
-			printf("The port number isn't a number!\n");
-			exit(1);
-		}
-	}
-
-	*myPort = strtol(str, NULL, 10);
-
-	if ((*myPort > 65535)) {
-		printf("you entered an invalid socket number\n");
-		exit(1);
-	}
-
-	server_address->sin_family = AF_INET; /* use AF_INET addresses */
-  	server_address->sin_port = htons(*myPort); /* convert port number */
-  	server_address->sin_addr.s_addr = INADDR_ANY; /* any adapter */
-
-	// Bind to address
-	rc = bind(*sd, (struct sockaddr *)server_address, sizeof(struct sockaddr));
-	
-	// Check for bind errors
-	if (rc < 0) {
-		perror("bind");
-		exit (1);
-	}
-}
-
-void createPartners(int sd, struct _partners *Partners, int myPort, int *myLocation) {
-	memset(Partners, 0, sizeof(struct _partners));
-	Partners->maxHosts = 0;
-	readFile(Partners, myPort, myLocation);
-	printf("Port:%d, Location:%d\n", myPort, *myLocation);
-	printPartners(Partners);
-}
-
-void readFile(struct _partners *Partners, int myPort, int *myLocation) {
-	FILE *cfp;
-	char *ptr;
-	char config[23];
-	int port;
-	int location;
-
-	if((cfp = fopen("config.file", "r")) == NULL) {
-		perror("Opening file");
-		exit(1);
-	}
-
-	while(fgets(config, 23, cfp) != NULL) {
-		ptr = strtok(config, " ");
-
-		port = atoi(strtok(NULL, " "));
-
-		location = atoi(strtok(NULL, "\n"));
-		if(myPort == port) {
-			*myLocation = location;
-		}
-
-		Partners->hostInfo[Partners->maxHosts].portNumber = port;
-		Partners->hostInfo[Partners->maxHosts].location = location;
-		strcpy (Partners->hostInfo[Partners->maxHosts].ipAddress, ptr);
-		Partners->hostInfo[Partners->maxHosts].currentSeqNumber = 0;
-		int i;
-		for(i = 0; i<MAXSEQNUMBER; i++) {
-			Partners->hostInfo[Partners->maxHosts].hasAcked[i] = false;     
-			Partners->hostInfo[Partners->maxHosts].sentAck[i] = false;     
-		}
-		Partners->hostInfo[Partners->maxHosts].location = location;
-		Partners->maxHosts ++;
-	}
-
-	fclose(cfp); // Closes config.file pointer
-}
-
-void printPartners(struct _partners *Partners) {
-	int i = 0;
-
-	/* the partners structure tells me how many partners/hosts i have */
-	while(i < Partners->maxHosts) { // do it for each entry. 
-		printf("ipaddress:%s, port:%d, location:%d, host:%d\n",
-			Partners->hostInfo[i].ipAddress, //IP address
-			Partners->hostInfo[i].portNumber, //port Number
-			Partners->hostInfo[i].location, //location
-		i);
-		i++;  // increment i
-	}
-}
-
-int findSequence(int toPort, struct _partners *Partners) {
-	for(int i = 0; i < Partners->maxHosts; i++) {
-		if(Partners->hostInfo[i].portNumber == toPort) {
-			Partners->hostInfo[i].currentSeqNumber ++;
-			return Partners->hostInfo[i].currentSeqNumber;
-		}
-	}
-	return -1;
-}
-
-int findIntToken(struct _tokens *tokens, int tableSize, char *key) {
-	for(int i = 0; i < tableSize; i++) {
-		if(strcmp(tokens[i].key, key) == 0) {
-			return atoi(tokens[i].value);
-		}
-	}
-	return -1;
-}
-
-char *findCharToken(struct _tokens *tokens, int tableSize, char *key) {
-	for(int i = 0; i < tableSize; i++) {
-		if(strcmp(tokens[i].key, key) == 0) {
-			return tokens[i].value;
-		}
-	}
-	return NULL;
-}
-
-int findPartner(int sourcePort, struct _partners Partners) {
-	for(int i = 0; i < Partners.maxHosts; i++) {
-		if(Partners.hostInfo[i].portNumber == sourcePort) {
-			return i;
-		}
-	}
-	return -1;
-}
+// version:7 msg:"hi 15" toPort:47015
