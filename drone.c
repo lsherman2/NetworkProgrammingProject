@@ -9,15 +9,16 @@
 #include <ctype.h>
 #include <math.h>
 #include <stdbool.h>
+#include <time.h>
 
 #define STDIN 0
-#define VERSION 7
+#define VERSION 8
 #define TTL 3
 #define MAXSEQNUMBER 100
 #define MAXPARTNERS 100
 // #define DEBUG
 
-struct _partnersHost{
+struct _partnersHost {
 	char ipAddress[25];
 	int portNumber;
 	int location; 
@@ -26,14 +27,19 @@ struct _partnersHost{
 	bool sentAck[MAXSEQNUMBER];
 };
 
-struct _partners{
+struct _partners {
 	int maxHosts;
 	struct _partnersHost hostInfo[MAXPARTNERS];
 };
 
 struct  _tokens {
 	char key[100];
-	char value [100];
+	char value[100];
+};
+
+struct _messages {
+	int time;
+	char message[200];
 };
 
 void addFromPort(char *buffer, int myPort);
@@ -68,14 +74,18 @@ void receiveMsg(char *buffer, int sd);
 void remakeMSG(char *buffer, struct _tokens *Tokens, int tokenNum);
 void sendMsg(char *buffer, int sd, struct sockaddr_in server_address);
 void sendToPartners(char *buffer, int sd, struct _partners Partners, int myPort);
-void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], int row, int col, int myPort, int *myLocation, int rc, struct sockaddr_in server_address, int *sequence, struct _partners *Partners, struct _tokens *tokens);
+void switchReceiving(char *buffer, int sd, int *messageIndex, struct _messages *Storage, int row, int col, int myPort, int *myLocation, int rc, struct sockaddr_in server_address, int *sequence, struct _partners *Partners, struct _tokens *Tokens);
 void switchSending(char *buffer, int myLocation, int myPort, int sd, struct sockaddr_in server_address, int sequence, struct _partners *Partners);
 int tokenizeBuffer(char *buffer, struct _tokens *Tokens);
 int checkPath(char *buffer, int portNumber);
 
+void resend(struct _messages *Storage, int messageIndex, int sd, struct _partners Partners, int myPort, int myLocation);
+
 int main(int argc, char *argv[]) {
 	struct _partners Partners;
-	struct _tokens Tokens [100];
+	struct _tokens Tokens[100];
+	struct _messages Storage[50];
+	struct timeval timeout;
   	int sd; // Socket descriptor
  	int rc; // Return code
   	int myPort; // Provided by the user on the command line
@@ -84,7 +94,6 @@ int main(int argc, char *argv[]) {
 	int maxSD; // How many sockets are there
 	int myLocation; // Stores drone's myLocation on the grid
 	char buffer[200]; // Stores the messages
-	char messages[50][200]; // Stores 100 messages sent by client
 	int messageIndex = 0; // Keeps track of messages that have been sent
 	int sequence = 0;
 	int row = 5; // Stores row number
@@ -103,12 +112,18 @@ int main(int argc, char *argv[]) {
 		else
 			maxSD = sd;
 		
-		rc = select(maxSD+1, &socketFDS, NULL, NULL, NULL); // NEW block until something arrives
-		if (FD_ISSET(STDIN, &socketFDS)){ // Means that I received something from the keyboard.
-			switchSending(buffer, myLocation, myPort, sd, server_address, sequence, &Partners);
-		}
-		if (FD_ISSET(sd, &socketFDS)) {
-			switchReceiving(buffer, sd, messageIndex, messages, row, col, myPort, &myLocation, rc, server_address, &sequence, &Partners, Tokens);
+		timeout.tv_sec = 20;
+		timeout.tv_usec = 0;
+		rc = select(maxSD+1, &socketFDS, NULL, NULL, &timeout); // NEW block until something arrives
+		if(rc == 0) { // had a timeout!
+			resend(Storage, messageIndex, sd, Partners, myPort, myLocation);
+		} else {
+			if(FD_ISSET(STDIN, &socketFDS)) { // Means that I received something from the keyboard.
+				switchSending(buffer, myLocation, myPort, sd, server_address, sequence, &Partners);
+			}
+			if(FD_ISSET(sd, &socketFDS)) {
+				switchReceiving(buffer, sd, &messageIndex, Storage, row, col, myPort, &myLocation, rc, server_address, &sequence, &Partners, Tokens);
+			}
 		}
 	}
 }
@@ -198,7 +213,7 @@ void changeMSG(struct _tokens *Tokens, char *buffer, int myLocation, int tokenNu
 
 void checkParams(int params) {
 	if (params < 2) {
-		printf("usage is: drone7 <myPort>\n");
+		printf("usage is: drone8 <myPort>\n");
 		exit (1);
 	}
 }
@@ -270,29 +285,6 @@ int checkRange(int sendLocation, int row, int col, int myLocation) {
 		return 1;
 	}
 	return 0;
-}
-
-int checkTTL(char arr[][100], int index) {
-	// if ttl is <= 0
-	if(atoi(arr[index + 1]) <= 0) {
-		#ifdef DEBUG
-		printf("TTL is: %s", arr[index + 1]);
-		#endif
-		return 0;
-	}
-	return 1;
-}
-
-int checkVersion(char arr[][100], int index) {
-	// Checks if message value for version == VERSION
-	if(atoi(arr[index + 1]) == VERSION) {
-		return 1;
-	} else {
-		#ifdef DEBUG
-		printf("Wrong version number\n");
-		#endif
-		return 0;
-	}
 }
 
 char *cleanUp(char *str) {
@@ -591,6 +583,42 @@ void receiveMsg(char *buffer, int sd) {
 	}
 }
 
+void resend(struct _messages *Storage, int messageIndex, int sd, struct _partners Partners, int myPort, int myLocation) {
+	char buffer[200];
+	char loc[10];
+	int tokenNum;
+	struct _tokens Tokens[100];
+
+	for(int i = 0; i < messageIndex; i++) {
+		if(Storage[i].time > 0) {
+			Storage[i].time -= 1;
+
+			memset(buffer, 0, 200);
+			strcpy(buffer, Storage[i].message);
+
+			sprintf(buffer, editMessage(buffer));
+
+			tokenNum = tokenizeBuffer(buffer, Tokens);
+
+			for(int i = 0; i < tokenNum; i++) {
+				if(strcmp(Tokens[i].key, "location") == 0) {
+					memset(Tokens[i].value, 0, 100); // clears the token value
+					memset(loc, 0, 10); // clears buff
+					snprintf(loc, sizeof(loc), "%d", myLocation); // changes myLocation into a string
+					strcpy(Tokens[i].value, loc); // moves the string into the value
+					break;
+				}
+			}
+			remakeMSG(buffer, Tokens, tokenNum);
+
+			memset(Storage[i].message, 0, 200);
+			strcpy(Storage[i].message, buffer);
+
+			sendToPartners(Storage[i].message, sd, Partners, myPort);
+		}
+	}
+}
+
 void remakeMSG(char *buffer, struct _tokens *Tokens, int tokenNum) {
 	memset(buffer, 0, 200); // Clears the buffer
 	for(int i = 0; i < tokenNum; i++) {
@@ -648,10 +676,9 @@ void sendToPartners(char *buffer, int sd, struct _partners Partners, int myPort)
 	}
 }
 
-void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], int row, int col, int myPort, int *myLocation, int rc, struct sockaddr_in server_address, int *sequence, struct _partners *Partners, struct _tokens *Tokens) {
+void switchReceiving(char *buffer, int sd, int *messageIndex, struct _messages *Storage, int row, int col, int myPort, int *myLocation, int rc, struct sockaddr_in server_address, int *sequence, struct _partners *Partners, struct _tokens *Tokens) {
 	int tokenNum, destinationPort, sourcePort, version, sendLocation, distance, move;
 	memset(buffer, 0, 200); // Zeros out buffer
-
 	receiveMsg(buffer, sd);
 
 	sprintf(buffer, editMessage(buffer)); // Moves edited message into the buffer
@@ -666,7 +693,7 @@ void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], i
 		#ifdef DEBUG
 			printf("No source/destination port");
 		#endif
-		exit(1);
+		return;
 	}
 
 	version = findIntToken(Tokens, tokenNum, "version"); // get version from the message
@@ -675,14 +702,14 @@ void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], i
 		#ifdef DEBUG
 			printf("No version number");
 		#endif
-		exit(1);
+		return;
 	}
 	// if it is the wrong version
 	if(version != VERSION) {
 		#ifdef DEBUG
 			printf("Wrong version number");
 		#endif
-		exit(1);
+		return;
 	}
 
 	// check that the move command is in the message
@@ -691,6 +718,8 @@ void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], i
 	if(move != -1 && destinationPort == myPort) {
 		// set myLocation
 		*myLocation = move;
+		resend(Storage, *messageIndex, sd, *Partners, myPort, *myLocation);
+		return;
 	}
 
 	sendLocation = findIntToken(Tokens, tokenNum, "location"); // check for location in the message
@@ -699,7 +728,7 @@ void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], i
 		#ifdef DEBUG
 			printf("Wrong version number");
 		#endif
-		exit(1);
+		return;
 	}
 
 	distance = checkRange(sendLocation, row, col, *myLocation); 
@@ -708,7 +737,6 @@ void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], i
 			printf("Location is not in the grid");
 		#endif
 	}
-
 	if(destinationPort == myPort) {
 		if(distance < 1) {
 			#ifdef DEBUG
@@ -738,7 +766,6 @@ void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], i
 				if(partnerPos > -1) {
 					char buffer[200];
 	    			memset (buffer, 0, 200);
-					//changeMSG(Tokens, buffer, myLocation, tokenNum, myPort);
 					sprintf (buffer, "send-path:%d TTL:%d version:%d toPort:%d fromPort:%d seqNumber:%d type:ACK location:%d", myPort, TTL, VERSION, sourcePort, myPort, seqNum, *myLocation);
 					sendToPartners(buffer, sd, *Partners, myPort);
 					if(Partners->hostInfo[partnerPos].sentAck[seqNum] == true) {
@@ -760,8 +787,13 @@ void switchReceiving(char *buffer, int sd, int messageIndex, char msgs[][200], i
 				printf ("message received NOT for me and msg out of lives!.\n");
 			#endif
 		} else {
+			remakeMSG(buffer, Tokens, tokenNum);
+			Storage[*messageIndex].time = 5;
+			memset(Storage[*messageIndex].message, 0, 200);
+			strcpy(Storage[*messageIndex].message, buffer);
 			changeMSG(Tokens, buffer, *myLocation, tokenNum, myPort);
 			sendToPartners(buffer, sd, *Partners, myPort);
+			*messageIndex = (*messageIndex + 1) % 50;
 		}
 	}
 }
@@ -796,5 +828,3 @@ int tokenizeBuffer(char *buffer, struct _tokens *Tokens) {
 	}
 	return i;
 }
-
-// version:7 msg:"hi 15" toPort:47015
